@@ -1,186 +1,153 @@
-# SkillExtract AI — Spatial-Semantic Verification System (TRL-4+)
+# SkillExtract: High-Integrity Resume Intelligence System
 
-SkillExtract AI is a full-stack recruitment intelligence platform designed to reduce **hallucination risk** in resume screening. It combines:
-- **Coordinate-aware PDF parsing** (layout structure awareness),
-- **Semantic cross-verification** (skill-to-context validation),
-- **Explainable weighted ranking** (confidence + layout significance).
+SkillExtract is a production-focused full-stack system for hallucination-resistant recruitment intelligence. It combines PDF spatial layout understanding with semantic verification to produce verifiable, auditable skill evidence.
 
-This repository is structured to support both practical deployment and patent-style technical disclosure.
-
----
-
-## 1) Patent-Oriented Invention Disclosure
+## Patent Disclosure
 
 ### Technical Problem
-Conventional recruitment AI pipelines over-rely on static keyword matching. This introduces:
-- False positives (hallucinated skill matches),
-- False negatives (skills hidden by formatting/layout),
-- Lack of explainability for hiring decisions.
+Legacy resume parsers rely on plain keyword matching and often misclassify candidate capability:
+- false positives from isolated terms,
+- false negatives from layout-heavy resumes,
+- weak evidence trails for human reviewers.
 
-### Technical Solution: Spatial-Semantic Synthesis
-SkillExtract AI introduces a layered verification architecture:
-1. Parse PDF words with `(x, y)` coordinates and infer section role (`header/body/footer`).
-2. For each candidate skill, validate against surrounding context (50-word window).
-3. Score and rank using context confidence and layout-aware weighting.
-4. Expose evidence in an interactive X-Ray UI (reasoning cards + confidence overlays).
+### Novelty: Spatial-Semantic Mapping
+SkillExtract introduces a verifiable mapping between:
+1. **Where** a skill appears in a document (coordinates and section weight), and
+2. **Why** that skill is credible (semantic similarity with local context).
 
-This gives the system a concrete technical character beyond abstract keyword filtering.
+This spatial-semantic synthesis provides technical behavior beyond abstract scoring.
 
----
-
-## 2) System Flow Diagram (Mermaid)
+## System Flow (Mermaid)
 
 ```mermaid
 graph TD
-    A[User PDF Upload] --> B[Spatial Layout Analysis]
-    B -->|Coordinates + Text| C[NER Skill Extraction]
-    C --> D[Semantic Context Verification]
-    D --> E{Integrity Score Logic}
-    E -->|Confidence > 85%| F[Verified Skill]
-    E -->|Confidence < 85%| G[Low-Confidence Flag]
-    F --> H[XAI Dashboard Render]
-    G --> H
+    A[PDF Upload] --> B[Spatial Extraction via pdfplumber]
+    B --> C[Skill Candidate Matching]
+    C --> D[Context Block Builder]
+    D --> E[Sentence-Transformer Similarity]
+    E --> F[Integrity Scoring S = CoordinateWeight * SemanticSimilarity]
+    F --> G[JSON API Response with Coordinates + Evidence]
+    G --> H[X-Ray Frontend Overlay + Radar Analytics]
 ```
 
----
+## Mathematical Formulation
 
-## 3) Mathematical Specification
+Core integrity score per skill:
 
-### Core Ranking Formula
 \[
-S_{final} = \sum (Importance \times Confidence \times SpatialWeight)
+S = \text{CoordinateWeight} \times \text{SemanticSimilarity}
 \]
 
-### Inventive Step / Patent Formula
-$$
-Score_{Total} = \frac{\sum_{i=1}^{n} (W_{skill} \cdot V_{context} \cdot L_{layout})}{\text{Total Required Skills}}
-$$
-
 Where:
-- $W_{skill}$: global importance of each skill from job requirements,
-- $V_{context}$: semantic similarity between skill mention and local textual context,
-- $L_{layout}$: spatial significance from layout position (e.g., Header = 1.0, Footer = 0.2).
+- `CoordinateWeight` is derived from document section (`header/body/footer`),
+- `SemanticSimilarity` is cosine similarity from `all-MiniLM-L6-v2` (normalized to `[0,1]`).
 
----
+Returned confidence uses the exact integrity score:
 
-## 4) Architecture
+\[
+Confidence_{skill} = S
+\]
 
-## Backend (FastAPI + Transformers)
+## Repository Layout
 
-### `app/services/spatial_parser.py`
-- Uses `pdfplumber` to extract tokens and geometry.
-- Assigns section classes by vertical position.
-- Produces context windows for semantic proofing.
+```text
+/backend
+  /app
+    config.py
+    main.py
+    schemas.py
+    /services
+      spatial_extractor.py
+      contextual_verifier.py
+  requirements.txt
+  server.py
+  .env.example
 
-### `app/services/verifier_engine.py`
-- Cross-encoder style semantic scoring (Transformers/Torch).
-- Safe fallback similarity when model loading is unavailable.
-- Produces human-readable reasoning evidence.
-
-### `app/services/patent_ranking.py`
-- Implements weighted ranking formula.
-- Returns per-skill weighted score and global total.
-
-### `app/main.py`
-- `/health` service probe endpoint.
-- `/analyze` endpoint for multipart PDF + job skills.
-- Includes robust validation and explicit PDF parse failure handling.
-- CORS enabled for frontend/backend local integration.
-
-## Frontend (React + Tailwind + Framer Motion)
-
-### X-Ray Resume Viewer
-- `react-pdf` rendering with confidence overlays.
-- Overlay color semantics:
-  - Green: high confidence,
-  - Yellow: needs review,
-  - Red: low confidence.
-
-### Integrity Dashboard
-- Match accuracy indicator,
-- Clickable evidence cards with reasoning,
-- Radar skill-gap visualization (`recharts`),
-- Interactive states for upload/analyze/error/result.
-
-### UI/UX
-- Dark glassmorphism cards,
-- Gradient hero shell,
-- Improved typography using Inter,
-- Animated transitions.
-
----
-
-## 5) API Contract
-
-### `GET /health`
-Returns service heartbeat:
-```json
-{ "status": "ok", "service": "SkillExtract AI" }
+/frontend
+  index.html
+  package.json
+  vite.config.js
+  tailwind.config.js
+  postcss.config.js
+  .env.example
+  /src
+    main.jsx
+    App.jsx
+    index.css
+    /components/ui
+      button.jsx
+      card.jsx
+      badge.jsx
+    /lib
+      utils.js
 ```
 
-### `POST /analyze`
-Multipart form-data:
+## Backend (FastAPI)
+
+### Endpoint
+`POST /analyze` (multipart form-data):
 - `resume`: PDF file
-- `job_skills`: comma-separated string (`Python,FastAPI,React,...`)
+- `job_skills`: comma-separated list (optional; defaults from env)
 
-Error behavior includes:
-- non-PDF uploads,
-- empty uploads,
-- unreadable/scanned PDFs with no extractable text,
-- parser failures surfaced with meaningful details.
+### Response payload
+Each detected skill includes:
+- `skill`
+- `coordinates` (`x0,y0,x1,y1,page,page_width,page_height`)
+- `confidence_score`
+- `semantic_similarity`
+- `coordinate_weight`
+- `evidence_snippet`
 
----
+### Environment configuration
+Copy `backend/.env.example` to `backend/.env` and adjust:
+- `APP_NAME`
+- `APP_VERSION`
+- `CORS_ORIGINS`
+- `SEMANTIC_MODEL_NAME`
+- `DEFAULT_REQUIRED_SKILLS`
+- `CONTEXT_WINDOW_SIZE`
 
-## 6) Local Setup
+## Frontend (React + Vite)
 
-### Backend
+### UI/UX stack
+- Tailwind CSS glassmorphism theme
+- Inter + JetBrains Mono typography
+- Framer Motion stagger animations
+- React-PDF rendering
+- SVG coordinate overlays for X-Ray bounding boxes
+- Recharts radar chart for skill-density by domain
+- Shadcn-style reusable UI primitives (`Button`, `Card`, `Badge`)
+
+### Environment configuration
+Copy `frontend/.env.example` to `frontend/.env` and adjust:
+- `VITE_API_BASE_URL`
+
+## Local Development
+
+### 1) Backend
 ```bash
-cd careerwise-ai-main/backend
+cd backend
 pip install -r requirements.txt
 python server.py
 ```
-Server starts on `http://0.0.0.0:8000`.
 
-### Frontend
+### 2) Frontend
 ```bash
-cd careerwise-ai-main/frontend
+cd frontend
 npm install
-npm start
-```
-Dev app starts on `http://localhost:3000`.
-
-Optional API base URL override:
-```bash
-# .env in frontend/
-REACT_APP_API_BASE_URL=http://localhost:8000
+npm run dev
 ```
 
----
+## Production Notes
+- Ensure model cache/network availability for first-time Sentence-Transformer download.
+- For scanned PDFs with no embedded text, OCR preprocessing is recommended before upload.
+- Keep `CORS_ORIGINS` restricted in production.
 
-## 7) Troubleshooting
+## TRL-4+ Positioning
+The system validates integrated subsystems in a relevant environment:
+- spatial text extraction,
+- semantic cross-validation,
+- deterministic scoring,
+- explainable human-review UI.
 
-### Runtime error: `Failed to fetch dynamically imported module ... pdf.worker.min.js`
-If you encounter PDF worker load errors:
-- Ensure internet access for worker CDN URL,
-- Hard refresh browser cache,
-- Confirm no corporate proxy blocks CDN worker files,
-- Verify `react-pdf` and `pdfjs-dist` versions remain compatible.
-
-### PDF uploads fail
-- Use a **text-based** PDF (not image-only scan),
-- Check backend is running and reachable,
-- Verify CORS/network path between `localhost:3000` and `localhost:8000`.
-
-### Model download delay
-First launch may take longer if transformer weights are downloaded.
-
----
-
-## 8) TRL-4+ Positioning
-This implementation validates integrated subsystems in a relevant environment:
-- Coordinate extraction,
-- Semantic verification,
-- Weighted ranking,
-- Explainable human-in-the-loop visualization.
-
-This aligns with TRL-4+ expectations for prototype-level technical feasibility.
+This supports patent-ready technical disclosure and practical hiring-assist workflows.

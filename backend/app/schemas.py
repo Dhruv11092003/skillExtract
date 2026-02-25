@@ -1,62 +1,51 @@
 from __future__ import annotations
 
-from typing import List, Literal, Optional
-from pydantic import BaseModel, Field, ConfigDict
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
-class WordBox(BaseModel):
+class Coordinate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    page_width: float = Field(gt=0)
+    page_height: float = Field(gt=0)
+    page: int = Field(ge=1)
+
+
+class SpatialToken(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     text: str = Field(min_length=1)
-    x0: float
-    x1: float
-    top: float
-    bottom: float
-    section: Literal["header", "body", "footer"]
+    coordinate: Coordinate
 
 
-class ParsedDocument(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    words: List[WordBox] = Field(default_factory=list)
-    full_text: str = ""
-
-
-class SkillEvidence(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    skill: str = Field(min_length=1)
-    context_window: str
-    semantic_proof_score: float = Field(ge=0.0, le=1.0)
-    confidence: float = Field(ge=0.0, le=1.0)
-    reasoning: str
-    section: Literal["header", "body", "footer"]
-    spatial_weight: float = Field(ge=0.0, le=1.0)
-
-
-class RankingInput(BaseModel):
+class SkillResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     skill: str
-    importance: float = Field(ge=0.0)
-    confidence: float = Field(ge=0.0, le=1.0)
-    spatial_weight: float = Field(ge=0.0, le=1.0)
-
-
-class RankedSkill(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    skill: str
-    importance: float
-    confidence: float
-    spatial_weight: float
-    weighted_score: float
+    coordinates: Coordinate
+    confidence_score: float = Field(ge=0.0, le=1.0)
+    semantic_similarity: float = Field(ge=0.0, le=1.0)
+    coordinate_weight: float = Field(ge=0.0, le=1.0)
+    evidence_snippet: str
+    section: Literal["header", "body", "footer"]
 
 
 class AnalyzeResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    extracted_skills: List[SkillEvidence]
-    ranked_skills: List[RankedSkill]
-    total_score: float = Field(ge=0.0)
-    notes: Optional[str] = None
+    skills: list[SkillResult]
+    total_detected: int = Field(ge=0)
+    model: str
+
+
+class HealthResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["ok"]
+    service: str

@@ -4,73 +4,97 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 
-from app.schemas import AnalyzeResponse, RankingInput
-from app.services.patent_ranking import PatentRankingEngine
-from app.services.spatial_parser import CoordinateAwareParser
-from app.services.verifier_engine import SemanticVerifier, infer_spatial_weight
+from app.config import settings
+from app.schemas import AnalyzeResponse, HealthResponse, SkillResult
+from app.services.contextual_verifier import ContextualVerifier, coordinate_weight, integrity_score
+from app.services.spatial_extractor import SpatialExtractor
 
-app = FastAPI(title="SkillExtract AI", version="1.0.0")
+app = FastAPI(title=settings.app_name, version=settings.app_version)
 
-parser = CoordinateAwareParser()
-verifier = SemanticVerifier()
-ranker = PatentRankingEngine()
+origins = [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins if origins else ["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+extractor = SpatialExtractor()
+verifier = ContextualVerifier(settings.semantic_model_name)
 
 
-@app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok", "service": "SkillExtract AI"}
+@app.get("/health", response_model=HealthResponse)
+def health() -> HealthResponse:
+    return HealthResponse(status="ok", service=settings.app_name)
 
 
 @app.post("/analyze", response_model=AnalyzeResponse)
 async def analyze_resume(
     resume: UploadFile = File(...),
-    job_skills: str = Form("Python,FastAPI,React,Django,SQL"),
+    job_skills: str = Form(default=""),
 ) -> AnalyzeResponse:
-    if not resume.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+    filename = (resume.filename or "").lower()
+    if not filename.endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only .pdf files are supported.")
 
-    requested_skills = [s.strip() for s in job_skills.split(",") if s.strip()]
-    if not requested_skills:
-        raise HTTPException(status_code=400, detail="Provide at least one job skill.")
+    content = await resume.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded PDF is empty.")
 
-    suffix = Path(resume.filename).suffix or ".pdf"
-    with NamedTemporaryFile(delete=True, suffix=suffix) as tmp:
-        tmp.write(await resume.read())
-        tmp.flush()
-        parsed = parser.parse_pdf(tmp.name)
+    skills = [s.strip() for s in (job_skills or settings.default_required_skills).split(",") if s.strip()]
+    if not skills:
+        raise HTTPException(status_code=400, detail="No skills provided for verification.")
 
-    tokens = [w.text for w in parsed.words]
-    evidences = []
-    ranking_inputs = []
+    try:
+        with NamedTemporaryFile(delete=True, suffix=".pdf") as temp_pdf:
+            temp_pdf.write(content)
+            temp_pdf.flush()
+            parsed = extractor.extract(Path(temp_pdf.name))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Unable to parse PDF: {exc}") from exc
 
-    lowered = [t.lower() for t in tokens]
-    for skill in requested_skills:
-        skill_token = skill.lower()
-        if skill_token in lowered:
-            idx = lowered.index(skill_token)
-            context = parser.surrounding_context(tokens, idx, window=50)
-            word = parsed.words[idx]
-            spatial_weight = infer_spatial_weight(word)
-            evidence = verifier.build_evidence(skill, context, word.section, spatial_weight)
-        else:
-            context = parsed.full_text[:400]
-            evidence = verifier.build_evidence(skill, context, "body", 0.2)
+    if not parsed.tokens:
+        raise HTTPException(status_code=422, detail="No text detected in PDF. Please upload text-based PDF.")
 
-        evidences.append(evidence)
-        ranking_inputs.append(
-            RankingInput(
-                skill=evidence.skill,
-                importance=1.0,
-                confidence=evidence.confidence,
-                spatial_weight=evidence.spatial_weight,
+    lowered_tokens = [token.text.lower() for token in parsed.tokens]
+    results: list[SkillResult] = []
+
+    for skill in skills:
+        skill_key = skill.lower()
+        hit_index = next((i for i, token in enumerate(lowered_tokens) if token == skill_key), None)
+        if hit_index is None:
+            hit_index = next((i for i, token in enumerate(lowered_tokens) if skill_key in token), None)
+
+        if hit_index is None:
+            continue
+
+        token = parsed.tokens[hit_index]
+        page_width, page_height = parsed.page_sizes.get(token.coordinate.page, (1.0, 1.0))
+        section = extractor.classify_section(token.coordinate.y0, page_height)
+        snippet = extractor.context(parsed.tokens, hit_index, settings.context_window_size)
+        semantic_similarity = verifier.similarity(skill, snippet)
+        c_weight = coordinate_weight(section)
+        confidence = integrity_score(c_weight, semantic_similarity)
+
+        results.append(
+            SkillResult(
+                skill=skill,
+                coordinates=token.coordinate,
+                confidence_score=confidence,
+                semantic_similarity=semantic_similarity,
+                coordinate_weight=c_weight,
+                evidence_snippet=snippet[:400],
+                section=section,
             )
         )
 
-    ranked, total = ranker.rank(ranking_inputs)
+    results.sort(key=lambda item: item.confidence_score, reverse=True)
+
     return AnalyzeResponse(
-        extracted_skills=evidences,
-        ranked_skills=ranked,
-        total_score=total,
-        notes="TRL-4 prototype with spatial-semantic verification and weighted ranking.",
+        skills=results,
+        total_detected=len(results),
+        model=settings.semantic_model_name,
     )
